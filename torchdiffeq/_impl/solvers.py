@@ -83,13 +83,15 @@ class FixedGridODESolver(object):
         assert time_grid[0] == t[0] and time_grid[-1] == t[-1]
         time_grid = time_grid.to(self.y0[0])
 
-        solution = [self.y0]
+        solution = [self.y0]  # [ (y0, ) ]
 
         j = 1
-        y0 = self.y0
+        y0 = self.y0  # y0 = tuple(tensor(samples, 1, dims), )
+        import pdb
+        pdb.set_trace()
         for t0, t1 in zip(time_grid[:-1], time_grid[1:]):
-            dy = self.step_func(self.func, t0, t1 - t0, y0)
-            y1 = tuple(y0_ + dy_ for y0_, dy_ in zip(y0, dy))
+            dy = self.step_func(self.func, t0, t1 - t0, y0)  # dy = tuple(tensor(samples, 1, dims), )
+            y1 = tuple(y0_ + dy_ for y0_, dy_ in zip(y0, dy))  # y1 = tuple(tensor(samples, 1, dims), )
 
             while j < len(t) and t1 >= t[j]:
                 solution.append(self._linear_interp(t0, t1, y0, y1, t[j]))
@@ -108,10 +110,10 @@ class FixedGridODESolver(object):
         return tuple(y0_ + slope_ * (t - t0) for y0_, slope_ in zip(y0, slope))
 
 
-class WeightFixedGridODESolver(object):
+class AssoicatorFixedGridODESolver(object):
     __metaclass__ = abc.ABCMeta
 
-    def __init__(self, func, y0, w_list, x_list, step_size=None, grid_constructor=None, **unused_kwargs):
+    def __init__(self, func, y0, w0, x_all, step_size=None, grid_constructor=None, **unused_kwargs):
         unused_kwargs.pop('rtol', None)
         unused_kwargs.pop('atol', None)
         _handle_unused_kwargs(self, unused_kwargs)
@@ -119,9 +121,8 @@ class WeightFixedGridODESolver(object):
 
         self.func = func  # take x, y, w, output dw/dt
         self.y0 = y0
-        self.w_list = w_list
-        self.x_list = x_list
-
+        self.w0 = (w0,)  # tuple((tensor(num_w, samples, 1, 1),)
+        self.x_all = x_all  # tensor (num_x, t, samples, 1, 1)
 
         if step_size is not None and grid_constructor is None:
             self.grid_constructor = self._grid_constructor_from_step_size(step_size)
@@ -151,30 +152,47 @@ class WeightFixedGridODESolver(object):
         pass
 
     @abc.abstractmethod
-    def step_func(self, func, t, dt, y):
+    def step_func(self, func, t, dt, y, w0_list, x_all_list, time_index):
         pass
 
     def integrate(self, t):
+
         _assert_increasing(t)
         t = t.type_as(self.y0[0])
         time_grid = self.grid_constructor(self.func, self.y0, t)
         assert time_grid[0] == t[0] and time_grid[-1] == t[-1]
         time_grid = time_grid.to(self.y0[0])
 
-        solution = [self.y0]
-
+        solution_y = [self.y0]
+        solution_w = [self.w0]
         j = 1
-        y0 = self.y0
+        time_index = 0
+        y0 = self.y0  # y0 = tuple(tensor(samples, 1, 1), )
+        w0 = self.w0  # tuple(tensor(num_w, samples, 1, 1),)
+        x_all = self.x_all  # tensor (num_x, t, samples, 1, 1)
+
+
         for t0, t1 in zip(time_grid[:-1], time_grid[1:]):
-            dy = self.step_func(self.func, t0, t1 - t0, y0)
+
+            dws, dy = self.step_func(self.func, t0, t1 - t0, y0, w0, x_all, time_index)
+            # dws = (dw1, dw2, ...num_w), dw? = tensor(samples, 1, 1)
+            # dy = (dy, ), dy = tensor(samples, 1, 1)
+            # import pdb
+            # pdb.set_trace()
             y1 = tuple(y0_ + dy_ for y0_, dy_ in zip(y0, dy))
 
+            w1 = (w0[0] + torch.stack(dws), )
             while j < len(t) and t1 >= t[j]:
-                solution.append(self._linear_interp(t0, t1, y0, y1, t[j]))
+                # import pdb
+                # pdb.set_trace()
+                solution_y.append(self._linear_interp(t0, t1, y0, y1, t[j]))
+                solution_w.append(self._linear_interp(t0, t1, w0, w1, t[j]))
                 j += 1
-            y0 = y1
 
-        return tuple(map(torch.stack, tuple(zip(*solution))))
+            y0 = y1
+            w0 = w1
+            time_index += 1
+        return tuple(map(torch.stack, tuple(zip(*solution_y)))), tuple(map(torch.stack, tuple(zip(*solution_w))))
 
     def _linear_interp(self, t0, t1, y0, y1, t):
         if t == t0:
