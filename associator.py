@@ -8,6 +8,12 @@ import torch.optim as optim
 from torchdiffeq import AssociatorODEint as odeint
 
 
+class SigGen:
+    def __init__(self):
+
+        pass
+
+
 class AssociatorODEFunc(nn.Module):
 
     def __init__(self):
@@ -70,6 +76,8 @@ if __name__ == '__main__':
     t = torch.linspace(0, 2 * np.pi, 1000)
     x1 = torch.sin(t).reshape((t.shape[0], 1, 1, 1))
     x2 = torch.sin(2 * t).reshape((t.shape[0], 1, 1, 1))
+
+
     x = torch.stack((x1, x2))  # x'shape = (num_x, t, samples, 1, 1)
     true_y = x1.clone()
     w0 = torch.zeros((2, 1, 1, 1))
