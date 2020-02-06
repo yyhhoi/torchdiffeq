@@ -52,7 +52,7 @@ class AssociatorEuler(AssoicatorFixedGridODESolver):
             dw_list.append((dw))
         dws = tuple(dw_list)
 
-        dy = tuple( -y_ + torch.sum(w + x_all_t, dim=0, keepdim=False) for y_ in y)
+        dy = tuple( (-y_ + torch.sum(w * x_all_t, dim=0, keepdim=False))*dt for y_ in y)
 
         return dws, dy
 
