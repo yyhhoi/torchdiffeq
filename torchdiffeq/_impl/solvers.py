@@ -173,7 +173,6 @@ class AssoicatorFixedGridODESolver(object):
 
 
         for t0, t1 in zip(time_grid[:-1], time_grid[1:]):
-
             dws, dy = self.step_func(self.func, t0, t1 - t0, y0, w0, x_all, time_index)
             # dws = (dw1, dw2, ...num_w), dw? = tensor(samples, 1, 1)
             # dy = (dy, ), dy = tensor(samples, 1, 1)

@@ -44,8 +44,8 @@ class AssociatorEuler(AssoicatorFixedGridODESolver):
         x_all_t = x_all[:, time_index, :, :, :]
         dw_list = []
         w = w[0]
-
         for w_idx in range(w.shape[0]):
+
             net_input = torch.cat((x_all_t[w_idx], y[0], w[w_idx]), dim=-1)
             net_output = func(t, (net_input, ))
             dw = dt * net_output[0]

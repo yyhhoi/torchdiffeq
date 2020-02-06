@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torchdiffeq import AssociatorODEint as odeint
-
+from input_generator import ExperimentSignalGenerator
 
 class SigGen:
     def __init__(self):
@@ -21,8 +21,6 @@ class AssociatorODEFunc(nn.Module):
 
         self.net = nn.Sequential(
             nn.Linear(3, 50),
-            nn.ReLU(),
-            nn.Linear(50, 50),
             nn.ReLU(),
             nn.Linear(50, 50),
             nn.ReLU(),
@@ -63,56 +61,83 @@ class RunningAverageMeter(object):
         self.val = val
 
 
+
+
 if __name__ == '__main__':
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     method = 'associator'
     end = time.time()
-    func = AssociatorODEFunc()
-    optimizer = optim.RMSprop(func.parameters(), lr=1e-3)
+    func1 = AssociatorODEFunc()
+    func2 = AssociatorODEFunc()
+    func3 = AssociatorODEFunc()
+    func4 = AssociatorODEFunc()
+    params = list(func1.parameters()) +  list(func2.parameters()) + list(func3.parameters()) + list(func4.parameters())
+    optimizer = optim.RMSprop(params, lr=1e-3)
     time_meter = RunningAverageMeter(0.97)
     loss_meter = RunningAverageMeter(0.97)
 
+    n_iter = 200
+    batch_size = 32
+    num_x, num_y = 4, 4
 
-    t = torch.linspace(0, 2 * np.pi, 1000)
-    x1 = torch.sin(t).reshape((t.shape[0], 1, 1, 1))
-    x2 = torch.sin(2 * t).reshape((t.shape[0], 1, 1, 1))
+    i_list, loss_list = [], []
+    gen = ExperimentSignalGenerator(num_x, num_y, batch_size=batch_size, step_size=0.01)
+    testgen = ExperimentSignalGenerator(num_x, num_y, batch_size=1, step_size=0.01)
+    for i in range(n_iter):
+        x, y, t = gen.generate_data(jitter=2)  # x,y shape = (num_x, t, samples, 1, 1)
+        t = torch.from_numpy(t).float()
+        x = torch.from_numpy(x).float()
+        y = torch.from_numpy(y).float()
+        w0 = torch.zeros((4, batch_size, 1, 1)).float()
+        y0 = torch.zeros((batch_size, 1, 1)).float()
 
+        pred_y1, pred_w1 = odeint(func1, y0, w0, x, t, method=method)  # (t, samples, 1, 1)
+        pred_y2, pred_w2 = odeint(func2, y0, w0, x, t, method=method)
+        pred_y3, pred_w3 = odeint(func3, y0, w0, x, t, method=method)
+        pred_y4, pred_w4 = odeint(func4, y0, w0, x, t, method=method)
 
-    x = torch.stack((x1, x2))  # x'shape = (num_x, t, samples, 1, 1)
-    true_y = x1.clone()
-    w0 = torch.zeros((2, 1, 1, 1))
-    y0 = torch.zeros((1, 1, 1))
+        pred_y = torch.stack([pred_y1, pred_y2, pred_y3, pred_y4])
 
-    for i in range(200):
-
-        pred_y, pred_w = odeint(func, y0, w0, x, t, method=method)
-        loss = torch.mean(torch.abs(pred_y - true_y))
+        loss = torch.mean(torch.abs(pred_y - y))
         loss.backward()
         optimizer.step()
-
-        time_meter.update(time.time() - end)
         loss_meter.update(loss.item())
+        print(loss_meter.avg)
+        i_list.append(i)
+        loss_list.append(loss_meter.avg)
+        if i % 1 ==0:
+            t_np = t.detach().numpy().squeeze()
+            x_np = x.detach().numpy().squeeze()[:, :, 0]
+            y_np = y.detach().numpy().squeeze()[:, :, 0]
+            pred_y_np = pred_y.detach().numpy().squeeze()[:, :, 0]
 
-        if i % 5 ==0:
-            with torch.no_grad():
-                pred_y, pred_w = odeint(func, y0, w0, x, t, method=method)
-                loss = torch.mean(torch.abs(pred_y - true_y))
-                print('itr %d loss = %0.5f' % (i, loss.item()))
-                fig, ax = plt.subplots(3, 2)
+            fig, ax = plt.subplots(4, 2)  # (num_x, t)
+            ax[0, 0].plot(t_np, x_np[0, :], label='x1')
+            ax[1, 0].plot(t_np, x_np[1, :], label='x2')
+            ax[2, 0].plot(t_np, x_np[2, :], label='x3')
+            ax[3, 0].plot(t_np, x_np[3, :], label='x4')
+            ax[0, 1].plot(t_np, y_np[0, :], label='true_y1')
+            ax[1, 1].plot(t_np, y_np[1, :], label='true_y2')
+            ax[2, 1].plot(t_np, y_np[2, :], label='true_y3')
+            ax[3, 1].plot(t_np, y_np[3, :], label='true_y4')
+            ax[0, 1].plot(t_np, pred_y_np[0, :], label='pred_y1')
+            ax[1, 1].plot(t_np, pred_y_np[1, :], label='pred_y2')
+            ax[2, 1].plot(t_np, pred_y_np[2, :], label='pred_y3')
+            ax[3, 1].plot(t_np, pred_y_np[3, :], label='pred_y4')
+            for axi in range(4):
+                for axj in range(2):
+                    ax[axi, axj].legend()
+            fig.suptitle('Iter %d, batch loss = %0.5f' % (i, loss_meter.avg))
+            plt.savefig('png/%d.png'%(i))
+            plt.close()
+            try:
+                fig_loss, ax_loss = plt.subplots()
+                if i < 50:
+                    ax_loss.plot(i_list, loss_list)
+                else:
+                    ax_loss.plot(i_list[:-49], loss_list[:-49])
 
-                ax[0, 0].plot(t.detach().numpy().squeeze(), x1.detach().numpy().squeeze())
-                ax[0, 0].set_title('x1')
-                ax[1, 0].plot(t.detach().numpy().squeeze(), x2.detach().numpy().squeeze())
-                ax[1, 0].set_title('x2')
-                ax[0, 1].plot(t.detach().numpy().squeeze(), pred_w.detach().numpy().squeeze()[:, 0])
-                ax[0, 1].set_title('pred_w1')
-                ax[1, 1].plot(t.detach().numpy().squeeze(), pred_w.detach().numpy().squeeze()[:, 1])
-                ax[1, 1].set_title('pred_w2')
-                ax[2, 0].plot(t.detach().numpy().squeeze(), pred_y.detach().numpy().squeeze(), label='pred')
-
-                ax[2, 0].plot(t.detach().numpy().squeeze(), true_y.detach().numpy().squeeze(), label='true')
-                ax[2, 0].legend()
-                ax[2, 1].axis('off')
-                fig.suptitle('Iter %d, loss = %0.5f' % (i, loss.item()))
-                plt.savefig('png/%d.png'%(i))
+                plt.savefig('loss_record.png')
                 plt.close()
+            except:
+                pass
